@@ -11,6 +11,12 @@ This code enable us to parse a non-commutative polynomial of s_0,s_1,s_2... and 
 GHC 8.0.2
 cabal-install version 1.22.9.0
 
+It might be convenient to install `rlwrap` for easy-input
+
+```bash
+rlwrap -cr ghci
+```
+
 ## DEMO
 
 ```bash
