@@ -2,7 +2,7 @@
 
 ## Description
 
-Let s_0,s_1,s_2... be standard semicircular random variable, then the expectation of a non-commutative polynmial of s_0,s_1,s_2... is determined uniquely by combinatrial calculation.
+Let s_0,s_1,s_2... be standard **Free Independent** semicircular random variable, then the expectation of a non-commutative polynmial of s_0,s_1,s_2... is determined uniquely by combinatrial calculation.
 
 This code enable us to parse non-commutative polynmial of s_0,s_1,s_2... and calculate their expectation
 
