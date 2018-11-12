@@ -162,7 +162,23 @@ semicircular = do
   return $ Semicircular $ foldl f 0 xs
   where f x y = x*10+y
 
-term = try parens <|> try semicircular <|> num
+chebyshev_polynomial :: Semipoly -> Int -> Semipoly
+chebyshev_polynomial (Semicircular n) deg
+  | deg == 0 = Val 1
+  | deg == 1 = Semicircular n
+  | otherwise = Sub (Mul (Semicircular n) (chebyshev_polynomial (Semicircular n) (deg-1))) (chebyshev_polynomial (Semicircular n) (deg-2))
+
+chebyshev = do
+  symbol "ch"
+  symbol "("
+  semi <- semicircular
+  symbol ","
+  xs <- many $ digitToInt <$> digit
+  symbol ")"
+  return $ chebyshev_polynomial semi $ foldl f 0 xs
+  where f x y = x*10+y
+
+term = try parens <|> try semicircular <|> try chebyshev <|> num
 
 op0 = (const Expo <$> symbol "^")
 op1 = (const Mul <$> symbol "*")
