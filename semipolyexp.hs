@@ -10,7 +10,7 @@ data Semipoly = Val Int
               | Add Semipoly Semipoly
               | Sub Semipoly Semipoly
               | Neg Semipoly
-              | Semicircular Int
+              | Sc Int
               | Var Int
               deriving Show
 
@@ -74,12 +74,12 @@ free_gen :: Semipoly -> [(Int,Monomial)]
 free_gen (Add s1 s2) = free_gen s1 ++ free_gen s2
 free_gen (Sub s1 s2) = free_gen s1 ++ (free_gen $ Neg s2)
 free_gen (Neg s) = negative $ free_gen s
-free_gen (Semicircular m) = [(1,[m])]
+free_gen (Sc m) = [(1,[m])]
 free_gen (Val n) = [(n,[])]
 free_gen (Mul (Val n) s) = let [(recn,l)] = free_gen s in [(n*recn,l)]
 free_gen (Mul s (Val n)) = let [(recn,l)] = free_gen s in [(n*recn,l)]
-free_gen (Mul (Semicircular m) s) = let [(recn,l)] = free_gen s in [(recn,m:l)]
-free_gen (Mul s (Semicircular m)) = let [(recn,l)] = free_gen s in [(recn,l++[m])]
+free_gen (Mul (Sc m) s) = let [(recn,l)] = free_gen s in [(recn,m:l)]
+free_gen (Mul s (Sc m)) = let [(recn,l)] = free_gen s in [(recn,l++[m])]
 free_gen (Mul s1 s2) = let [(recn1,l1)] = free_gen s1
                            [(recn2,l2)] = free_gen s2
                        in [(recn1*recn2,l1++l2)]
@@ -159,19 +159,19 @@ semicircular = do
   symbol "s"
   symbol "_"
   xs <- many $ digitToInt <$> digit
-  return $ Semicircular $ foldl f 0 xs
+  return $ Sc $ foldl f 0 xs
   where f x y = x*10+y
 
 chebyshev_polynomial :: Semipoly -> Int -> Semipoly
-chebyshev_polynomial (Semicircular n) deg
+chebyshev_polynomial s deg
   | deg == 0 = Val 1
-  | deg == 1 = Semicircular n
-  | otherwise = Sub (Mul (Semicircular n) (chebyshev_polynomial (Semicircular n) (deg-1))) (chebyshev_polynomial (Semicircular n) (deg-2))
+  | deg == 1 = s
+  | otherwise = Sub (Mul s (chebyshev_polynomial s (deg-1))) (chebyshev_polynomial s (deg-2))
 
 chebyshev = do
   symbol "ch"
   symbol "("
-  semi <- semicircular
+  semi <- expr
   symbol ","
   xs <- many $ digitToInt <$> digit
   symbol ")"
