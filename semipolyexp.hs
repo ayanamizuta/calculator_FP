@@ -1,10 +1,13 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 import Data.Char
+import Data.List
 import Control.Applicative hiding (many)
 import Text.Parsec hiding ((<|>))
 import Debug.Trace
 
-data Semipoly = Val Int
+data Semipoly = Val Integer
               | Expo Semipoly Semipoly
               | Mul Semipoly Semipoly
               | Add Semipoly Semipoly
@@ -13,15 +16,12 @@ data Semipoly = Val Int
               | Sc Int
               | Var Int
               deriving Show
-
-data Varpoly = Value Int
-             | Variable String
              
 type Monomial = [Int]
 
--- calculate moments
+-- calculate moments of standard semicircular element
 
-nck :: Int -> Int -> Int
+nck :: Integer -> Integer -> Integer
 nck n 0 = 1
 nck n k =  (n*(nck (n-1) (k-1))) `div` k
   
@@ -66,11 +66,11 @@ monomial (Mul m (Sub s1 s2)) = let t1 = monomial $ Mul m s1
 monomial (Mul m1 m2) = monomial_sub $ Mul (monomial m1) (monomial m2)
 monomial x = x
 
-negative :: [(Int,Monomial)] -> [(Int,Monomial)]
+negative :: [(Integer,Monomial)] -> [(Integer,Monomial)]
 negative [] = []
 negative ((n,l):xs) = (-n,l):(negative xs)
 
-free_gen :: Semipoly -> [(Int,Monomial)]
+free_gen :: Semipoly -> [(Integer,Monomial)]
 free_gen (Add s1 s2) = free_gen s1 ++ free_gen s2
 free_gen (Sub s1 s2) = free_gen s1 ++ (free_gen $ Neg s2)
 free_gen (Neg s) = negative $ free_gen s
@@ -83,6 +83,10 @@ free_gen (Mul s (Sc m)) = let [(recn,l)] = free_gen s in [(recn,l++[m])]
 free_gen (Mul s1 s2) = let [(recn1,l1)] = free_gen s1
                            [(recn2,l2)] = free_gen s2
                        in [(recn1*recn2,l1++l2)]
+
+max_nums_var :: [(Integer,Monomial)]->Int
+max_nums_var [] = 0
+max_nums_var ((_,m):xs) = max (foldl max 0 m) $ max_nums_var xs
 
 powerset :: [a] -> [[a]]
 powerset [] = [[]]
@@ -117,7 +121,7 @@ elim_rv (x:y:xs) (z:zs) w
                   False -> x:(elim_rv (y:xs) (z:zs) (w+1))
                             
                             
-expectation_monomial :: Monomial -> Int
+expectation_monomial :: Monomial -> Integer
 expectation_monomial x
   | x == [] = 1
   | x == (take (length x) $ repeat (x !! 0)) = case length x `mod` 2 of
@@ -131,11 +135,159 @@ expectation_monomial x
                         n -> k + (-1)^(1 + length interval) * n * (expectation_monomial $ elim_rv x interval 0)
                 in foldl cross_prod 0 intervals
 
-exp_monomial :: Int -> (Int,Monomial) -> Int
+exp_monomial :: Integer -> (Integer,Monomial) -> Integer
 exp_monomial n (a,b) = n + a * (expectation_monomial b)
 
-expectation :: Semipoly -> Int
+expectation :: Semipoly -> Integer
 expectation sp = foldl exp_monomial 0 $ free_gen $ monomial $ expand sp
+
+-- Sch\"utzenberger's algorithm
+
+type OneVarPolynomial = [Integer]
+
+instance Num OneVarPolynomial where
+  (+) [] [] = []
+  (+) [] ys = ys
+  (+) xs [] = xs
+  (+) (x:xs) (y:ys) = (x+y):((+) xs ys)
+  (*) xs ys = if all (==0) xs
+              then []
+              else  (map (*(head xs)) ys) + (0 : ((tail xs)*ys))
+
+type Matrix_OVP = [[OneVarPolynomial]]
+type PAS = [Matrix_OVP]
+
+bdd_mul :: Int->OneVarPolynomial->OneVarPolynomial->OneVarPolynomial
+bdd_mul n xs ys = if all (==0) xs
+                  then []
+                  else (map (*(head xs)) $ take n ys) + (0 : (bdd_mul (n-1) (tail xs) ys))
+                    
+comm_add_sub :: [Integer]->Integer->Integer->Integer->Integer
+comm_add_sub [] _ _ _ = 0
+comm_add_sub (x:xs) const n m = (const^m)*(nck n m)*x + (comm_add_sub xs const n (m-1))
+
+comm_add :: Integer->Integer->[Integer]->Integer -- calculate the n-th moment from 1,...,n-th moment of constant-free part
+comm_add n const l = comm_add_sub l const n n
+
+split_const :: Semipoly -> Integer -- valid only monomial_style Semipoly
+split_const (Val n) = n
+split_const (Add sp1 sp2) = let c1 = split_const sp1
+                                c2 = split_const sp2
+                            in c1+c2
+split_const (Sub sp1 sp2) = let c1 = split_const sp1
+                                c2 = split_const sp2
+                            in c1-c2
+split_const (Mul sp1 sp2) = let c1 = split_const sp1
+                                c2 = split_const sp2
+                            in c1*c2
+split_const _ = 0
+
+degree :: Semipoly -> Int -- valid only monomial_style Semipoly
+degree (Val _) = 0
+degree (Sc _) = 1
+degree (Neg sp) = degree sp
+degree (Add sp1 sp2) = let c1 = degree sp1
+                           c2 = degree sp2
+                       in max c1 c2
+degree (Sub sp1 sp2) = let c1 = degree sp1
+                           c2 = degree sp2
+                       in max c1 c2
+degree (Mul sp1 sp2) = let c1 = degree sp1
+                           c2 = degree sp2
+                       in c1+c2
+degree _ = 0
+
+make_zeros :: Int->Matrix_OVP
+make_zeros size = [[[]|y<-[1..size]]|z<-[1..size]]
+
+make_ones :: Int->Matrix_OVP
+make_ones size = [[if y==z then [1] else []|y<-[1..size]]|z<-[1..size]]
+
+mul_mat :: Matrix_OVP->Matrix_OVP->Matrix_OVP
+mul_mat x y = let yt = transpose y
+                  size = length x
+              in [[foldl (+) [] [(x!!i!!k)*(yt!!j!!k)|k<-enumFromTo 0 $ size-1]|j<-enumFromTo 0 $ size-1]|i<-enumFromTo 0 $ size-1]
+
+bdd_mul_mat :: Int->Matrix_OVP->Matrix_OVP->Matrix_OVP
+bdd_mul_mat n x y = let yt = transpose y
+                        size = length x
+                    in [[foldl (+) [] [bdd_mul n (x!!i!!k) (yt!!j!!k)|k<-enumFromTo 0 $ size-1]|j<-enumFromTo 0 $ size-1]|i<-enumFromTo 0 $ size-1]
+
+add_mat :: Matrix_OVP->Matrix_OVP->Matrix_OVP
+add_mat x y = let size = length x in [[(x!!i!!j)+(y!!i!!j)|j<-enumFromTo 0 $ size-1]|i<-enumFromTo 0 $ size-1]
+
+-- based on pas of P_semi in D.Shlyakhtenko's paper
+iterate_pas :: PAS->Int->Int->Matrix_OVP->Matrix_OVP 
+iterate_pas _ _ 0 x = x
+iterate_pas z n iter x = let size = length x
+                             ones = make_ones size
+                             zeros = make_zeros size
+                             var_num = length z
+                             zxi = [bdd_mul_mat n (z!!i) $ add_mat x ones|i<-enumFromTo 0 $ var_num-1]
+                         in iterate_pas z n (iter-1) $ foldl add_mat zeros [bdd_mul_mat n (zxi!!i) (zxi!!i)|i<-enumFromTo 0 $ var_num-1]
+
+-- the core of algorithm for calculating monoid hom associated with the given rational element
+
+pseudo_inverse :: (Int,PAS)->(Int,PAS)
+pseudo_inverse (size,x) = (size,[[[if j==0 then x!!v!!i!!(size-1) else x!!v!!i!!j|j<-enumFromTo 0 $ size-1]|i<-enumFromTo 0 $ size-1]|v<-enumFromTo 0 $ length x-1])
+
+pas_add_sub_ :: Matrix_OVP->Matrix_OVP->Int->Int->Int->Int->OneVarPolynomial
+pas_add_sub_ x y n1 n2 i j
+  | i>=1 && i<n1+1 && j>=1 && j<n1+1 = x!!(i-1)!!(j-1)
+  | i>=1+n1 && i<n1+n2+1 && j>=1+n1 && j<n1+n2+1 = y!!(i-1-n1)!!(j-1-n1)
+  | i==0 && j>=1 && j<n1+1 = x!!0!!(j-1)
+  | i==0 && j>=1+n1 && j<n1+n2+1 = y!!0!!(j-1-n1)
+  | j==n1+n2+1 && i>=1 && i<1+n1 = x!!(i-1)!!(n1-1)
+  | j==n1+n2+1 && i>=1+n1 && i<n1+n2+1 = y!!(i-1-n1)!!(n2-1)
+  | i==0 && j==n1+n2+1 = x!!0!!(n1-1) + y!!0!!(n2-1)
+  | otherwise = []
+
+pas_add_sub :: Matrix_OVP->Matrix_OVP->Matrix_OVP
+pas_add_sub x y = let n1 = length x
+                      n2 = length y
+                  in [[pas_add_sub_ x y n1 n2 i j|j<-enumFromTo 0 $ n1+n2+1]|i<-enumFromTo 0 $ n1+n2+1]
+
+pas_mul_sub :: Matrix_OVP->Matrix_OVP->Matrix_OVP
+pas_mul_sub x y = let n1 = length x
+                      n2 = length y
+                  in [[if i<n1 && j<n1+1 then x!!i!!(min j $n1-1) else if i>=n1 && j>=n1 then y!!(i-n1)!!(j-n1) else []|j<-enumFromTo 0 $ n1+n2-1]|i<-enumFromTo 0 $ n1+n2-1]
+
+pas_add :: Int->(Int,PAS)->(Int,PAS)->(Int,PAS)
+pas_add vn (s1,x) (s2,y) = (s1+s2+2,[pas_add_sub (x!!v) (y!!v)|v<-enumFromTo 0 $vn-1])
+pas_mul :: Int->(Int,PAS)->(Int,PAS)->(Int,PAS)
+pas_mul vn (s1,x) (s2,y) = (s1+s2,[pas_mul_sub (x!!v) (y!!v)|v<-enumFromTo 0 $vn-1])
+
+pas_monomial :: (Integer,Monomial)->Int->(Int,PAS)
+pas_monomial (k,[sc_num]) vn = (2,[[[if v==sc_num && i==0 && j==1 then [0,k] else []|j<-[0,1]]|i<-[0,1]]|v<-enumFromTo 0 $vn-1])
+pas_monomial (k,(x:xs)) vn = pas_mul vn (2,[[[if v==x && i==0 && j==1 then [1] else []|j<-[0,1]]|i<-[0,1]]|v<-enumFromTo 0 $vn-1]) (pas_monomial (k,xs) vn)
+
+proper_algebraic_system_sub :: [(Integer,Monomial)]->Int->(Int,PAS)
+proper_algebraic_system_sub [x] vn = pas_monomial x vn
+proper_algebraic_system_sub (x:xs) vn = pas_add vn (pas_monomial x vn) $ proper_algebraic_system_sub xs vn
+
+proper_algebraic_system :: [(Integer,Monomial)]->Int->(Int,PAS)
+proper_algebraic_system fg vars_num = pseudo_inverse $ proper_algebraic_system_sub fg vars_num
+
+const_cut :: [(Integer,Monomial)]->[(Integer,Monomial)]
+const_cut [] = []
+const_cut ((dum,[]):xs) = const_cut xs
+const_cut (x:xs) = x:(const_cut xs)
+
+schutzenberger_sub :: Semipoly -> Int -> Int -> Matrix_OVP
+schutzenberger_sub sp n iter = let fg_sub = free_gen sp
+                                   fg = const_cut fg_sub
+                                   vars_num = max_nums_var fg + 1
+                                   (size,mats) = proper_algebraic_system fg vars_num
+                                   zeros = make_zeros size
+                               in iterate_pas mats n iter zeros
+
+schutzenberger :: Semipoly -> Integer -> Integer
+schutzenberger sp n = let monomial_style = monomial $ expand sp
+                          const = split_const monomial_style
+                          iter = degree monomial_style
+                          n_ = read (show n) :: Int
+                          vars = schutzenberger_sub monomial_style (n_+1) $ iter*n_
+                      in comm_add n const (1:(tail.last $ vars !! 0))
 
 -- parsing
 
@@ -145,15 +297,24 @@ symbol xs = do
   return result
 
 num = do
-  xs <- many $ digitToInt <$> digit
-  return $ Val $ foldl f 0 xs
-  where f x y = x*10+y
+  xs <- read <$> many1 digit :: Stream s m Char => ParsecT s u m Integer
+  --xs <- many $ digitToInt <$> digit
+  return $ Val xs
+  --return $ Val $ foldl f 0 xs
+  --where f x y = x*10+y
 
 parens = do
   symbol "("
   result <- expr
   symbol ")"
   return result
+
+variable = do
+  symbol "a"
+  symbol "_"
+  xs <- many $ digitToInt <$> digit
+  return $ Var $ foldl f 0 xs
+  where f x y = x*10+y
 
 semicircular = do
   symbol "s"
@@ -178,7 +339,7 @@ chebyshev = do
   return $ chebyshev_polynomial semi $ foldl f 0 xs
   where f x y = x*10+y
 
-term = try parens <|> try semicircular <|> try chebyshev <|> num
+term = try parens <|> try variable <|> try semicircular <|> try chebyshev <|> num
 
 op0 = (const Expo <$> symbol "^")
 op1 = (const Mul <$> symbol "*")
@@ -188,7 +349,7 @@ expr = do
   spaces
   term `chainl1` op0 `chainl1` op1 `chainl1` op2
 
-fourth_cumulant :: Semipoly -> Int
+fourth_cumulant :: Semipoly -> Integer
 fourth_cumulant s = let exp = expectation $ s
                         centered_s = Sub s $ Val exp
                     in (expectation $ Expo centered_s $ Val 4) - 2*(expectation $ Expo centered_s $ Val 2)^2
@@ -196,14 +357,14 @@ fourth_cumulant s = let exp = expectation $ s
 unw :: Either ParseError Semipoly -> Semipoly
 unw (Right sp) = sp
 
+naive :: Semipoly -> Integer -> Integer
+naive ast n = expectation $ Expo ast (Val n)
+
 main :: IO ()
 main = do
   poly <- getLine
+  n <- getLine
   let ast = parse expr "" poly
-  putStrLn $ "AST          :" ++ (show ast)
-  putStr "Expectation  :"
-  putStrLn . show $ expectation $ unw ast
-  putStr "4-th cumulant:"
-  putStrLn . show $ fourth_cumulant $ unw ast
-  
-
+  putStrLn $ "AST          :" ++ (show (unw ast))
+  putStrLn . show $ schutzenberger (unw ast) (read n :: Integer)
+  --putStrLn . show $ naive (unw ast) (read n :: Integer)
