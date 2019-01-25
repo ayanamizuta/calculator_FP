@@ -31,7 +31,7 @@ semipolyexp.hs:148:10: warning: [-Wmissing-methods]
 Ok, one module loaded.
 *Main> main
 s_0						//a standard semicircular element
-100
+100						//calculate 100th moment
 AST          :Sc 0
 1978261657756160653623774456
 *Main> main
